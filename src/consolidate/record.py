@@ -1,0 +1,34 @@
+"""Record and Source: the two contracts the engine is built on.
+
+A Record is one entity, identity-keyed so the same entity arriving from
+different sources merges instead of duplicating. A Source is a connector that
+pulls native rows and maps them onto Records — native schema stays behind the
+connector, the engine sees only Records.
+"""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class Record:
+    key: str
+    fields: dict = field(default_factory=dict)
+    source: str = ""
+    # Source's last-modified time. Drives incremental sync (the cursor) and
+    # conflict resolution (newest write wins per field).
+    updated_at: float = 0.0
+
+
+class Source(ABC):
+    name: str
+
+    @abstractmethod
+    def fetch(self, since: float) -> Iterable[Record]:
+        """Records changed strictly after `since` (this source's cursor).
+
+        Native-row → Record mapping happens here, so a re-fetch from the
+        current cursor pulls only new work.
+        """
