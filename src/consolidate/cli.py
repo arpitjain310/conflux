@@ -29,6 +29,9 @@ def build_demo(trust: list[str] | None = None) -> Pipeline:
     crm.add({"id": 1, "full_name": "Ada Lovelace", "email": "ada@crm"}, updated_at=10.0)
     crm.add({"id": 1, "email": "ada@crm-late"}, updated_at=30.0)
     crm.add({"id": 2, "full_name": "Alan Turing"}, updated_at=11.0)
+    # Customer 3 arrives from crm, then billing reports it gone: the tombstone
+    # propagates and `get customer:3` returns nothing.
+    crm.add({"id": 3, "full_name": "Grace Hopper"}, updated_at=15.0)
 
     # A billing-style source: same customers, different field names.
     billing = MockSource(
@@ -39,6 +42,7 @@ def build_demo(trust: list[str] | None = None) -> Pipeline:
     )
     billing.add({"customer_id": 1, "email_address": "ada@billing", "plan": "pro"}, updated_at=20.0)
     billing.add({"customer_id": 2, "plan": "free"}, updated_at=12.0)
+    billing.remove(3, updated_at=25.0)
 
     resolver = SourcePriority(trust) if trust else LastWriteWins()
     return Pipeline([crm, billing], InMemoryStore(resolver))
@@ -65,7 +69,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sync":
         print(
             f"inserted={report.inserted} updated={report.updated} "
-            f"conflicts={report.conflicts} pulled={report.pulled_by_source}"
+            f"conflicts={report.conflicts} deleted={report.deleted} "
+            f"pulled={report.pulled_by_source}"
         )
         return 0
 

@@ -9,7 +9,8 @@
 **Status:** v0.1.0 scaffold. Source/Record contract, schema reconciliation,
 idempotent per-field upsert with pluggable conflict resolution (last-write-wins
 or source priority), incremental sync with a boundary-correct persisted cursor,
-and a two-source demo, all against in-memory mocks.
+tombstone-based delete propagation, and a two-source demo, all against in-memory
+mocks.
 
 ---
 
@@ -89,6 +90,16 @@ that while still pulling only new work. The cursor advances only after a source
 drains, so a mid-source failure re-pulls rather than skips. State is persisted
 atomically, so sync resumes across processes.
 
+## Deletes
+
+An upsert-only consolidator drifts from source truth: an entity deleted at the
+source lives forever. A source reports a delete as a **tombstone** — a Record
+with a timestamp and no fields — and the store masks every field older than it.
+A later write from any source revives just the newer fields (delete-then-
+recreate), so deletes compose with the same per-field, multi-source merge as
+everything else. Tombstones flow through the incremental cursor like any other
+change.
+
 ## Quickstart
 
 ```bash
@@ -98,4 +109,5 @@ pytest -q
 conflux sync
 conflux get customer:1
 conflux --trust billing,crm get customer:1
+conflux get customer:3   # deleted by billing → no record
 ```
