@@ -1,8 +1,10 @@
 """Consolidated store: one merged record per key.
 
-upsert is idempotent — re-applying a record the store has already seen changes
-nothing — and merges field-by-field across sources. Each field keeps the write
-that set it (value, source, time); a Resolver decides who wins a contested field.
+Provenance is the source of truth: every field keeps the write that set it
+(value, source, time). upsert is idempotent, merges field-by-field across
+sources — a Resolver decides who wins a contested field — and a delete is a
+timestamped tombstone that masks fields older than it, so a later write from any
+source revives just those fields.
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ class UpsertResult:
     updated: bool = False
     # An existing field was overwritten with a different value.
     conflict: bool = False
+    deleted: bool = False
 
 
 class Store(ABC):
@@ -32,50 +35,62 @@ class Store(ABC):
 class InMemoryStore(Store):
     def __init__(self, resolver: Resolver | None = None) -> None:
         self.resolver = resolver or LastWriteWins()
-        self._records: dict[str, Record] = {}
-        # Per-field provenance so resolution is per field, not per record: a
-        # lesser source can still contribute a field no one else has set.
         self._prov: dict[str, dict[str, FieldWrite]] = {}
+        # Per-entity tombstone time. A field survives only if written after it.
+        self._tombstone: dict[str, float] = {}
 
     def upsert(self, record: Record) -> UpsertResult:
+        if record.deleted:
+            return self._apply_delete(record)
+
         prov = self._prov.get(record.key)
         if prov is None:
-            self._records[record.key] = record
             self._prov[record.key] = {
                 name: FieldWrite(value, record.source, record.updated_at)
                 for name, value in record.fields.items()
             }
-            return UpsertResult(inserted=True)
+            return UpsertResult(inserted=not self._is_deleted(record.key))
 
-        merged = dict(self._records[record.key].fields)
         changed = False
         conflict = False
         for name, value in record.fields.items():
             incoming = FieldWrite(value, record.source, record.updated_at)
             current = prov.get(name)
-            if current is None:
-                merged[name] = value
-                prov[name] = incoming
-                changed = True
-            elif self.resolver.wins(incoming, current):
-                if merged[name] != value:
+            if current is None or self.resolver.wins(incoming, current):
+                if current is not None and current.value != value:
                     conflict = True
-                merged[name] = value
                 prov[name] = incoming
                 changed = True
             # Loser write to a field we already hold: ignore (idempotency).
-
-        if changed:
-            self._records[record.key] = Record(
-                key=record.key,
-                fields=merged,
-                source=record.source,
-                updated_at=max(self._records[record.key].updated_at, record.updated_at),
-            )
         return UpsertResult(updated=changed, conflict=conflict)
 
     def get(self, key: str) -> Record | None:
-        return self._records.get(key)
+        live = self._live_fields(key)
+        if not live:
+            return None
+        latest = max(live.values(), key=lambda fw: fw.updated_at)
+        return Record(
+            key=key,
+            fields={name: fw.value for name, fw in live.items()},
+            source=latest.source,
+            updated_at=latest.updated_at,
+        )
 
     def keys(self) -> list[str]:
-        return list(self._records)
+        return [key for key in self._prov if self._live_fields(key)]
+
+    def _apply_delete(self, record: Record) -> UpsertResult:
+        prior = self._tombstone.get(record.key, 0.0)
+        if record.updated_at <= prior:
+            return UpsertResult()  # stale or repeated delete: no-op
+        had_live = bool(self._live_fields(record.key))
+        self._tombstone[record.key] = record.updated_at
+        return UpsertResult(deleted=had_live and not self._live_fields(record.key))
+
+    def _live_fields(self, key: str) -> dict[str, FieldWrite]:
+        tombstone = self._tombstone.get(key, 0.0)
+        prov = self._prov.get(key, {})
+        return {name: fw for name, fw in prov.items() if fw.updated_at > tombstone}
+
+    def _is_deleted(self, key: str) -> bool:
+        return not self._live_fields(key)

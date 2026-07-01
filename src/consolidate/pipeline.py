@@ -17,6 +17,7 @@ class SyncReport:
     inserted: int = 0
     updated: int = 0
     conflicts: int = 0
+    deleted: int = 0
     pulled_by_source: dict[str, int] = field(default_factory=dict)
 
 
@@ -38,6 +39,7 @@ class Pipeline:
                 report.inserted += int(result.inserted)
                 report.updated += int(result.updated)
                 report.conflicts += int(result.conflict)
+                report.deleted += int(result.deleted)
                 pulled += 1
                 if record.updated_at > high:
                     high = record.updated_at

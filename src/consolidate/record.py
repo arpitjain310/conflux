@@ -22,6 +22,7 @@ class Record:
     # Source's last-modified time. Drives incremental sync (the cursor) and
     # conflict resolution (newest write wins per field).
     updated_at: float = 0.0
+    deleted: bool = False
 
 
 class Source(ABC):
