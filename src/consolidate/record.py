@@ -11,6 +11,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from .state import Cursor
+
 
 @dataclass(frozen=True)
 class Record:
@@ -26,9 +28,10 @@ class Source(ABC):
     name: str
 
     @abstractmethod
-    def fetch(self, since: float) -> Iterable[Record]:
-        """Records changed strictly after `since` (this source's cursor).
+    def fetch(self, cursor: Cursor) -> Iterable[Record]:
+        """Records at or after the cursor watermark, excluding keys already seen
+        at exactly that watermark.
 
-        Native-row → Record mapping happens here, so a re-fetch from the
-        current cursor pulls only new work.
+        Native-row → Record mapping happens here, so a re-fetch from the current
+        cursor pulls only new work without dropping rows on the boundary.
         """

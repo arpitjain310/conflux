@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from .record import Source
-from .state import SyncState
+from .state import Cursor, SyncState
 from .store import Store
 
 
@@ -29,18 +29,23 @@ class Pipeline:
     def sync(self) -> SyncReport:
         report = SyncReport()
         for source in self.sources:
-            since = self.state.cursor(source.name)
-            high = since
+            cursor = self.state.cursor(source.name)
+            high = cursor.watermark
+            seen_at_high = set(cursor.seen)
             pulled = 0
-            for record in source.fetch(since):
+            for record in source.fetch(cursor):
                 result = self.store.upsert(record)
                 report.inserted += int(result.inserted)
                 report.updated += int(result.updated)
                 report.conflicts += int(result.conflict)
-                high = max(high, record.updated_at)
                 pulled += 1
+                if record.updated_at > high:
+                    high = record.updated_at
+                    seen_at_high = {record.key}
+                elif record.updated_at == high:
+                    seen_at_high.add(record.key)
             report.pulled_by_source[source.name] = pulled
             # Advance only after the source drains, so a mid-source failure
             # re-pulls from the last committed cursor rather than skipping rows.
-            self.state.advance(source.name, high)
+            self.state.advance(source.name, Cursor(high, frozenset(seen_at_high)))
         return report

@@ -7,6 +7,7 @@ from collections.abc import Iterable
 
 from ..record import Record, Source
 from ..schema import FieldMap
+from ..state import Cursor
 
 
 class MockSource(Source):
@@ -28,14 +29,17 @@ class MockSource(Source):
     def add(self, native: dict, updated_at: float) -> None:
         self._rows.append((updated_at, native))
 
-    def fetch(self, since: float) -> Iterable[Record]:
+    def fetch(self, cursor: Cursor) -> Iterable[Record]:
         for updated_at, native in sorted(self._rows, key=lambda r: r[0]):
-            if updated_at <= since:
+            key = f"{self.entity}:{native[self.key_field]}"
+            if updated_at < cursor.watermark:
+                continue
+            if updated_at == cursor.watermark and key in cursor.seen:
                 continue
             # Identity lives in the key, not the fields — drop the id column.
             payload = {k: v for k, v in native.items() if k != self.key_field}
             yield Record(
-                key=f"{self.entity}:{native[self.key_field]}",
+                key=key,
                 fields=self.field_map.apply(payload),
                 source=self.name,
                 updated_at=updated_at,

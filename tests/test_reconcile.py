@@ -1,5 +1,6 @@
 from consolidate.schema import FieldMap
 from consolidate.sources.mock import MockSource
+from consolidate.state import Cursor
 
 
 def test_fieldmap_renames_and_coerces():
@@ -20,5 +21,5 @@ def test_two_sources_merge_onto_one_entity():
     billing = MockSource("billing", key_field="customer_id", entity="customer")
     billing.add({"customer_id": 1, "plan": "pro"}, updated_at=11.0)
 
-    keys = {r.key for r in list(crm.fetch(0.0)) + list(billing.fetch(0.0))}
+    keys = {r.key for r in list(crm.fetch(Cursor())) + list(billing.fetch(Cursor()))}
     assert keys == {"customer:1"}
