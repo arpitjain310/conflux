@@ -41,7 +41,18 @@ def test_incremental_picks_up_only_new_rows():
     report = pipeline.sync()
     assert report.pulled_by_source == {"crm": 1, "billing": 0}
     assert report.inserted == 1
-    assert state.cursor("crm") == 30.0
+    assert state.cursor("crm").watermark == 30.0
+
+
+def test_new_row_at_the_watermark_boundary_is_not_skipped():
+    state = SyncState()
+    crm, _, pipeline = build(state)
+    pipeline.sync()
+    assert state.cursor("crm").watermark == 10.0
+    crm.add({"id": 3, "full_name": "Grace", "email": "grace@x"}, updated_at=10.0)
+    report = pipeline.sync()
+    assert report.pulled_by_source["crm"] == 1
+    assert pipeline.store.get("customer:3") is not None
 
 
 def test_cursor_persists_across_runs(tmp_path):
@@ -50,5 +61,6 @@ def test_cursor_persists_across_runs(tmp_path):
     pipeline.sync()
     # A fresh state loaded from disk resumes from the persisted cursor.
     resumed = SyncState.load(path)
-    assert resumed.cursor("crm") == 10.0
-    assert resumed.cursor("billing") == 20.0
+    assert resumed.cursor("crm").watermark == 10.0
+    assert resumed.cursor("billing").watermark == 20.0
+    assert resumed.cursor("crm").seen == {"customer:1"}
