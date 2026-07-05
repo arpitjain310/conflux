@@ -15,7 +15,12 @@ from .pipeline import Pipeline
 from .resolve import LastWriteWins, SourcePriority
 from .schema import FieldMap
 from .sources.mock import MockSource
+from .sources.sql import SqlSource, connect
 from .store import InMemoryStore
+
+
+def _resolver(trust: list[str] | None):
+    return SourcePriority(trust) if trust else LastWriteWins()
 
 
 def build_demo(trust: list[str] | None = None) -> Pipeline:
@@ -44,8 +49,36 @@ def build_demo(trust: list[str] | None = None) -> Pipeline:
     billing.add({"customer_id": 2, "plan": "free"}, updated_at=12.0)
     billing.remove(3, updated_at=25.0)
 
-    resolver = SourcePriority(trust) if trust else LastWriteWins()
-    return Pipeline([crm, billing], InMemoryStore(resolver))
+    return Pipeline([crm, billing], InMemoryStore(_resolver(trust)))
+
+
+def _seed_sqlite(conn) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS customers ("
+        "id INTEGER PRIMARY KEY, full_name TEXT, email TEXT, "
+        "updated_at REAL, deleted INTEGER DEFAULT 0)"
+    )
+    rows = [
+        (1, "Ada Lovelace", "ada@crm", 10.0, 0),
+        (2, "Alan Turing", "alan@crm", 11.0, 0),
+        # Soft-deleted at the source: fetch turns this into a tombstone.
+        (3, "Grace Hopper", "grace@crm", 25.0, 1),
+    ]
+    conn.executemany("INSERT OR REPLACE INTO customers VALUES (?, ?, ?, ?, ?)", rows)
+    conn.commit()
+
+
+def build_sqlite_demo(db: str, trust: list[str] | None = None) -> Pipeline:
+    conn = connect(db)
+    _seed_sqlite(conn)
+    crm = SqlSource(
+        "crm",
+        conn,
+        "customers",
+        entity="customer",
+        field_map=FieldMap(rename={"name": "full_name", "email": "email"}),
+    )
+    return Pipeline([crm], InMemoryStore(_resolver(trust)))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,6 +89,13 @@ def main(argv: list[str] | None = None) -> int:
         help="comma-separated source priority (highest-trust first); "
         "resolves conflicts by trust instead of last-write-wins",
     )
+    parser.add_argument(
+        "--provider",
+        choices=["mock", "sqlite"],
+        default="mock",
+        help="source backend: in-memory mocks, or a real SQLite table",
+    )
+    parser.add_argument("--db", default=":memory:", help="SQLite path for --provider sqlite")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("sync", help="consolidate all sources into the store")
     get = sub.add_parser("get", help="print the merged record for a key")
@@ -63,7 +103,10 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     trust = args.trust.split(",") if args.trust else None
-    pipeline = build_demo(trust=trust)
+    if args.provider == "sqlite":
+        pipeline = build_sqlite_demo(args.db, trust=trust)
+    else:
+        pipeline = build_demo(trust=trust)
     report = pipeline.sync()
 
     if args.command == "sync":
