@@ -9,8 +9,8 @@
 **Status:** v0.1.0 scaffold. Source/Record contract, schema reconciliation,
 idempotent per-field upsert with pluggable conflict resolution (last-write-wins
 or source priority), incremental sync with a boundary-correct persisted cursor,
-tombstone-based delete propagation, and a two-source demo, all against in-memory
-mocks.
+and tombstone-based delete propagation. Develops against in-memory mocks, with a
+real SQLite source wired behind the same contract.
 
 ---
 
@@ -61,9 +61,9 @@ source C ─┘                                      │
 ## Explicit non-goals
 
 - Not a chatbot or a model — the hard part here is the data, not inference.
-- No live external systems during development — sources are **mocked**; a real
-  backend (SQL connector + on-disk store) is wired behind the same contract
-  next, to prove it holds.
+- No live external systems during development — sources are **mocked**; one real
+  source (SQLite) is wired behind the same contract to prove it holds. The
+  consolidated store is still in-memory.
 - Not a general ETL framework — it consolidates entity records, it does not run
   arbitrary transforms.
 
@@ -99,6 +99,23 @@ A later write from any source revives just the newer fields (delete-then-
 recreate), so deletes compose with the same per-field, multi-source merge as
 everything else. Tombstones flow through the incremental cursor like any other
 change.
+
+## Real source
+
+The engine develops against mocks; SQLite is the one real source, wired behind
+the same `Source` contract:
+
+- `SqlSource` runs a real `SELECT ... WHERE updated_at >= ?` against a table,
+  maps native columns through a `FieldMap`, and turns a soft-delete column into a
+  tombstone — so incremental sync, schema reconciliation, and deletes all run
+  against real rows.
+- Zero infrastructure: `sqlite3` is standard library.
+
+```bash
+conflux --provider sqlite sync
+conflux --provider sqlite get customer:1   # full_name → name, reconciled from SQL
+conflux --provider sqlite get customer:3   # soft-deleted in SQL → no record
+```
 
 ## Quickstart
 
