@@ -1,7 +1,8 @@
 """Schema reconciliation: sources name and type the same field differently.
 
-A FieldMap normalizes a native row to canonical field names (and optional type
-coercion) before it becomes a Record, so everything downstream sees one schema.
+FieldMap normalizes native field *names* (and per-source quirks) to canonical
+ones. Schema declares the canonical *types* and which fields a complete entity
+needs. Type coercion is per record.
 """
 from __future__ import annotations
 
@@ -30,3 +31,33 @@ class FieldMap:
             if k not in mapped_natives and k not in out:
                 out[k] = v
         return out
+
+
+@dataclass
+class Field:
+    name: str
+    type: Callable = str
+    required: bool = False
+
+
+@dataclass
+class Schema:
+    fields: list[Field]
+
+    def coerce(self, fields: dict) -> tuple[dict, list[str]]:
+        declared = {f.name: f for f in self.fields}
+        clean: dict = {}
+        errors: list[str] = []
+        for name, value in fields.items():
+            f = declared.get(name)
+            if f is None:
+                clean[name] = value
+                continue
+            try:
+                clean[name] = f.type(value)
+            except (TypeError, ValueError):
+                errors.append(f"{name}={value!r} is not {f.type.__name__}")
+        return clean, errors
+
+    def missing_required(self, fields: dict) -> list[str]:
+        return [f.name for f in self.fields if f.required and f.name not in fields]
