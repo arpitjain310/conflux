@@ -31,6 +31,9 @@ class Store(ABC):
     @abstractmethod
     def get(self, key: str) -> Record | None: ...
 
+    @abstractmethod
+    def keys(self) -> list[str]: ...
+
 
 class InMemoryStore(Store):
     def __init__(self, resolver: Resolver | None = None) -> None:
