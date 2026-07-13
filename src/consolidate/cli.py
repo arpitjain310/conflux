@@ -13,10 +13,17 @@ import json
 
 from .pipeline import Pipeline
 from .resolve import LastWriteWins, SourcePriority
-from .schema import FieldMap
+from .schema import Field, FieldMap, Schema
 from .sources.mock import MockSource
 from .sources.sql import SqlSource, connect
 from .store import InMemoryStore
+
+DEMO_SCHEMA = Schema([
+    Field("name", str, required=True),
+    Field("email", str),
+    Field("plan", str),
+    Field("mrr", int),
+])
 
 
 def _resolver(trust: list[str] | None):
@@ -45,11 +52,16 @@ def build_demo(trust: list[str] | None = None) -> Pipeline:
         key_field="customer_id",
         entity="customer",
     )
-    billing.add({"customer_id": 1, "email_address": "ada@billing", "plan": "pro"}, updated_at=20.0)
+    billing.add(
+        {"customer_id": 1, "email_address": "ada@billing", "plan": "pro", "mrr": "4900"},
+        updated_at=20.0,
+    )
     billing.add({"customer_id": 2, "plan": "free"}, updated_at=12.0)
     billing.remove(3, updated_at=25.0)
+    billing.add({"customer_id": 4, "plan": "team"}, updated_at=13.0)
+    billing.add({"customer_id": 5, "mrr": "lots"}, updated_at=14.0)
 
-    return Pipeline([crm, billing], InMemoryStore(_resolver(trust)))
+    return Pipeline([crm, billing], InMemoryStore(_resolver(trust)), schema=DEMO_SCHEMA)
 
 
 def _seed_sqlite(conn) -> None:
@@ -78,7 +90,7 @@ def build_sqlite_demo(db: str, trust: list[str] | None = None) -> Pipeline:
         entity="customer",
         field_map=FieldMap(rename={"name": "full_name", "email": "email"}),
     )
-    return Pipeline([crm], InMemoryStore(_resolver(trust)))
+    return Pipeline([crm], InMemoryStore(_resolver(trust)), schema=DEMO_SCHEMA)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -113,8 +125,12 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"inserted={report.inserted} updated={report.updated} "
             f"conflicts={report.conflicts} deleted={report.deleted} "
-            f"pulled={report.pulled_by_source}"
+            f"rejected={report.rejected} pulled={report.pulled_by_source}"
         )
+        for r in report.rejects:
+            print(f"  rejected {r.key} from {r.source}: {', '.join(r.errors)}")
+        for i in report.incomplete:
+            print(f"  incomplete {i.key}: missing {', '.join(i.missing)}")
         return 0
 
     record = pipeline.store.get(args.key)
