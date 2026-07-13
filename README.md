@@ -6,10 +6,11 @@
 > schemas, and merges everything into one queryable store — with incremental
 > sync, idempotent upserts, and last-write-wins conflict resolution.
 
-**Status:** v0.1.0 scaffold. Source/Record contract, schema reconciliation,
-idempotent per-field upsert with pluggable conflict resolution (last-write-wins
-or source priority), incremental sync with a boundary-correct persisted cursor,
-and tombstone-based delete propagation. Develops against in-memory mocks, with a
+**Status:** v0.1.0 scaffold. Source/Record contract, schema reconciliation
+(name mapping + typed coercion with per-entity completeness), idempotent
+per-field upsert with pluggable conflict resolution (last-write-wins or source
+priority), incremental sync with a boundary-correct persisted cursor, and
+tombstone-based delete propagation. Develops against in-memory mocks, with a
 real SQLite source wired behind the same contract.
 
 ---
@@ -46,8 +47,9 @@ source C ─┘                                      │
 
 - **Record + Source** (`record.py`) — one contract per connector. A source maps
   its native rows to entity-keyed Records; the engine never sees native schema.
-- **Schema reconciliation** (`schema.py`) — a `FieldMap` renames and coerces
-  native fields to a canonical schema before they become Records.
+- **Schema reconciliation** (`schema.py`) — a `FieldMap` renames native fields
+  to canonical names; a typed `Schema` coerces them to canonical types at ingest
+  and flags entities missing a required field after merge.
 - **Store** (`store.py`) — one merged record per key. `upsert` is idempotent and
   merges per field; a `Resolver` decides who wins a contested field.
 - **Resolver** (`resolve.py`) — the trust model, separate from the merge
@@ -66,6 +68,22 @@ source C ─┘                                      │
   consolidated store is still in-memory.
 - Not a general ETL framework — it consolidates entity records, it does not run
   arbitrary transforms.
+
+## Schema reconciliation
+
+`FieldMap` handles field *names*; a canonical `Schema` handles field *types* and
+completeness, and it draws a deliberate line between two checks that live at
+different granularities:
+
+- **Type coercion is per record, at ingest.** A declared field is coerced to its
+  canonical type — a `"4900"` from a CSV-style source and a `4900` from SQL both
+  become `int 4900`, so they merge instead of colliding as different types. A
+  value that can't be coerced **quarantines that record** (counted in `rejected`)
+  instead of leaking a bad type into the store. Undeclared fields pass through.
+- **Required-ness is per entity, after merge.** Fields arrive from different
+  sources, so no single source record should be rejected for lacking `name`.
+  Completeness is checked on the *merged* record and reported as `incomplete` —
+  gating it at ingest would wrongly reject every partial source row.
 
 ## Conflict resolution
 
